@@ -1,165 +1,62 @@
-const chai = require('chai');
-const nock = require('nock');
-const request = require('supertest');
-const app = require('../server');
+name: Build and Push to Docker
 
-describe('GET /', function () {
-  it('responds with home page', function (done) {
+on:
+  push:
+    branches:
+      - main
 
-    //specify the url to be intercepted
-    nock("http://localhost:8082")
-      //define the method to be intercepted
-      .get('/events')
-      //respond with a OK and the specified JSON response
-      .reply(200, {
-        "status": 200,
-        "events": [
-          { title: 'an event', id: 1234, description: 'something really cool', location: 'Joes pizza', likes: 0 },
-          { title: 'another event', id: 5678, description: 'something even cooler', location: 'Johns pizza', likes: 0 }
-        ]
-      });
+env:
+  RUN_NUMBER: ${{ github.run_number }}
+  IMAGE: external
 
-    request(app)
-      .get('/')
-      .expect('Content-Type', /html/)
-      .expect(200)
-      .end((err, res) => {
-        if (err) {
-          return done(err);
-        }
-        chai.assert.isTrue(res.text.includes("<h1>Welcome to [TEAM NAME'S] application</h1>"));
-        return done();
-      });
+jobs:
+  build-test_node_project:
+    name: build and test node project
+    runs-on: ubuntu-latest
+    environment: production
 
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
 
-  });
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18.x'
+        check-latest: true
 
+    - name: Install dependencies
+      run: npm install
 
-  it('should display page when the backend is down', function (done) {
-    //specify the url to be intercepted
-    nock("http://localhost:8082")
-      //define the method to be intercepted
-      .get('/events')
-      //respond with an error
-      .replyWithError("Error");
+    - name: Run tests
+      run: npm test
+   
+  login_then_push_dockerhub:
+    name: docker image build and push
+    needs: build-test_node_project
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+         node-version: '18.x'
+         check-latest: true
+      - run: npm install
 
-    request(app)
-      .get('/')
-      .expect('Content-Type', /html/)
-      .expect(200)
-      .end((err, res) => {
-        if (err) {
-          return done(err);
-        }
-        chai.assert.isTrue(res.text.includes("Error"));
-        return done();
-      });
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+   
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-
-  });
-
-});
-
-
-
-describe('POST /event', function () {
-  it('adds an event', function (done) {
-  const data = { title: 'test event', description: 'even cooler test', id: 4321, location: 'Some Test Place', likes: 0 };
-    //specify the url to be intercepted
-    nock("http://localhost:8082")
-      //define the method to be intercepted
-      .post('/event')
-      //respond with a OK and the specified JSON response
-      .reply(200, {
-        "status": 200,
-        "events": [
-          { title: 'an event', id: 1234, description: 'something really cool', location: 'Joes pizza', likes: 0 },
-          { title: 'another event', id: 5678, description: 'something even cooler', location: 'Johns pizza', likes: 0 },
-          data
-        ]
-      });
-
-    request(app)
-      .post('/event')
-      .expect(302)
-      .end((err, res) => {
-        if (err) {
-          return done(err);
-        }
-        chai.assert.isTrue(res.text.includes("Redirecting"));
-        return done();
-      });
-
-
-  });
-});
-
-
-
-
-describe('POST /event/like', function () {
-  it('likes an event', function (done) {
-  const data = { id: 1234 };
-    //specify the url to be intercepted
-    nock("http://localhost:8082")
-      //define the method to be intercepted
-      .post('/event/like')
-      //respond with a OK and the specified JSON response
-      .reply(200, {
-        "status": 200,
-        "events": [
-          { title: 'an event', id: 1234, description: 'something really cool', location: 'Joes pizza', likes: 1 },
-          { title: 'another event', id: 5678, description: 'something even cooler', location: 'Johns pizza', likes: 0 },
-        ]
-      });
-
-      request(app)
-      .post('/event/like')
-      .expect(302)
-      .end((err, res) => {
-        if (err) {
-          return done(err);
-        }
-        chai.assert.isTrue(res.text.includes("Redirecting"));
-        return done();
-      });
-
-
-  });
-});
-
-
-describe('POST /event/unlike', function () {
-  it('un-likes an event', function (done) {
-  const data = { id: 1234 };
-    //specify the url to be intercepted
-    nock("http://localhost:8082")
-      //define the method to be intercepted
-      .delete('/event/like')
-      //respond with a OK and the specified JSON response
-      .reply(200, {
-        "status": 200,
-        "events": [
-          { title: 'an event', id: 1234, description: 'something really cool', location: 'Joes pizza', likes: 0 },
-          { title: 'another event', id: 5678, description: 'something even cooler', location: 'Johns pizza', likes: 0 },
-        ]
-      });
-
-      request(app)
-      .post('/event/unlike')
-      .expect(302)
-      .end((err, res) => {
-        if (err) {
-          return done(err);
-        }
-        chai.assert.isTrue(res.text.includes("Redirecting"));
-        return done();
-      });
-
-
-  });
-});
-
-
-
-
+      - name: Docker build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/${{ env.IMAGE }}:v2.1.${{ github.run_number }}
